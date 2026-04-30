@@ -7,6 +7,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  models: read
 
 jobs:
   generate:
@@ -47,60 +48,56 @@ jobs:
 
       # Diff the snapshot against the freshly generated file, ask GitHub Models to
       # summarise what changed in plain English, then prepend the entry to CHANGELOG.md.
-      - name: Generate AI-assisted changelog entry
-        id: changelog
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute client diff
+        id: diff
         run: |
           DIFF=$(diff -u src/schema.d.ts.prev src/schema.d.ts 2>/dev/null || true)
 
           if [ -z "$DIFF" ]; then
             echo "No changes detected in the generated client — skipping changelog update."
-            echo "entry=No changes detected in the generated client." >> "$GITHUB_OUTPUT"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
           # Truncate to ~300 lines to stay within model token limits.
-          DIFF_TRUNCATED=$(printf '%s' "$DIFF" | head -300)
-
-          PAYLOAD=$(jq -n --arg diff "$DIFF_TRUNCATED" '{
-            "model": "openai/gpt-4o-mini",
-            "messages": [
-              {
-                "role": "system",
-                "content": "You are a technical writer. Given a unified diff of a TypeScript API client generated from an OpenAPI schema, produce a concise human-readable changelog entry in Markdown. Group items under ### Added, ### Changed, and ### Removed headings (omit empty sections). Use bullet points. Be specific about endpoint paths and type names. Aim for 3-15 bullets total."
-              },
-              {
-                "role": "user",
-                "content": ("Here is the diff of the generated TypeScript client:\n\n```diff\n" + $diff + "\n```\n\nWrite the changelog entry.")
-              }
-            ],
-            "max_tokens": 600
-          }')
-
-          RESPONSE=$(curl -fsSL \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD" \
-            "https://models.github.ai/orgs/bartek-borkowski-airhelp/inference/chat/completions")
-
-          ENTRY=$(printf '%s' "$RESPONSE" | jq -r '.choices[0].message.content // "AI changelog generation failed — review the diff manually."')
-
           {
-            echo "entry<<EOF"
-            printf '%s' "$ENTRY"
+            echo "content<<EOF"
+            printf '%s' "$DIFF" | head -300
             echo ""
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Generate AI-assisted changelog entry
+        id: ai_entry
+        if: steps.diff.outputs.has_changes == 'true'
+        uses: actions/ai-inference@v1
+        with:
+          model: openai/gpt-4o-mini
+          token: ${{ secrets.GITHUB_TOKEN }}
+          system-prompt: >-
+            You are a technical writer. Given a unified diff of a TypeScript API
+            client generated from an OpenAPI schema, produce a concise
+            human-readable changelog entry in Markdown. Group items under
+            ### Added, ### Changed, and ### Removed headings (omit empty
+            sections). Use bullet points. Be specific about endpoint paths and
+            type names. Aim for 3-15 bullets total.
+          prompt: |
+            Here is the diff of the generated TypeScript client:
+
+            ```diff
+            ${{ steps.diff.outputs.content }}
+            ```
+
+            Write the changelog entry.
+
       - name: Prepend entry to CHANGELOG.md
-        if: ${{ steps.changelog.outputs.entry != 'No changes detected in the generated client.' }}
+        if: steps.diff.outputs.has_changes == 'true'
         env:
           SOURCE_SHA: ${{ github.event.client_payload.sha }}
           SOURCE_REF: ${{ github.event.client_payload.ref }}
-          CHANGELOG_ENTRY: ${{ steps.changelog.outputs.entry }}
+          CHANGELOG_ENTRY: ${{ steps.ai_entry.outputs.response }}
         run: |
           DATE=$(date +%Y-%m-%d)
           {
@@ -130,6 +127,6 @@ jobs:
 
             ### Changelog entry preview
 
-            ${{ steps.changelog.outputs.entry }}
+            ${{ steps.ai_entry.outputs.response }}
           branch: chore/regenerate-openapi-types
           delete-branch: true
