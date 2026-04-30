@@ -272,6 +272,7 @@ export interface paths {
                      *      * `narrowbody`
                      *      * `widebody`
                      *      * `regional_jet`
+                     *      * `biplane`
                      * @enum {unknown}
                      */
                     body_type?: string;
@@ -1102,9 +1103,9 @@ export interface components {
             name: string;
             iata_code: string;
             /** @enum {string} */
-            engine_type: "turbofan" | "turboprop" | "piston";
+            engine_type: "turbofan" | "turboprop" | "piston" | "propeller";
             /** @enum {string} */
-            body_type: "narrowbody" | "widebody" | "regional_jet";
+            body_type: "narrowbody" | "widebody" | "regional_jet" | "biplane";
             /** @enum {string} */
             range_category: "short" | "medium" | "long";
             range_km: number;
@@ -1125,9 +1126,9 @@ export interface components {
                 name: string;
                 iata_code: string;
                 /** @enum {string} */
-                engine_type: "turbofan" | "turboprop" | "piston";
+                engine_type: "turbofan" | "turboprop" | "piston" | "propeller";
                 /** @enum {string} */
-                body_type: "narrowbody" | "widebody" | "regional_jet";
+                body_type: "narrowbody" | "widebody" | "regional_jet" | "biplane";
                 /** @enum {string} */
                 range_category: "short" | "medium" | "long";
                 range_km: number;
