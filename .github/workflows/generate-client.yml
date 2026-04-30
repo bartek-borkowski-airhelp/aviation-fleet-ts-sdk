@@ -64,7 +64,7 @@ jobs:
           DIFF_TRUNCATED=$(printf '%s' "$DIFF" | head -300)
 
           PAYLOAD=$(jq -n --arg diff "$DIFF_TRUNCATED" '{
-            "model": "gpt-4o-mini",
+            "model": "openai/gpt-4o-mini",
             "messages": [
               {
                 "role": "system",
@@ -80,9 +80,11 @@ jobs:
 
           RESPONSE=$(curl -fsSL \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" \
-            "https://models.inference.ai.azure.com/chat/completions")
+            "https://models.github.ai/orgs/bartek-borkowski-airhelp/inference/chat/completions")
 
           ENTRY=$(printf '%s' "$RESPONSE" | jq -r '.choices[0].message.content // "AI changelog generation failed — review the diff manually."')
 
