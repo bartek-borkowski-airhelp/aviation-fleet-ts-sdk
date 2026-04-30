@@ -15,6 +15,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Snapshot the current generated file before wiping so we can diff it later.
+      - name: Snapshot previous generated client
+        run: cp src/schema.d.ts src/schema.d.ts.prev 2>/dev/null || true
+
+      # Clean-room: remove every generated artifact so nothing stale survives into
+      # the new generation. CHANGELOG.md is intentionally excluded.
+      - name: Clean generated artifacts
+        run: |
+          rm -f openapi-schema.yaml
+          rm -f src/schema.d.ts
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -34,6 +45,75 @@ jobs:
       - name: Generate TypeScript types
         run: npx openapi-typescript ./openapi-schema.yaml -o ./src/schema.d.ts
 
+      # Diff the snapshot against the freshly generated file, ask GitHub Models to
+      # summarise what changed in plain English, then prepend the entry to CHANGELOG.md.
+      - name: Generate AI-assisted changelog entry
+        id: changelog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DIFF=$(diff -u src/schema.d.ts.prev src/schema.d.ts 2>/dev/null || true)
+
+          if [ -z "$DIFF" ]; then
+            echo "No changes detected in the generated client — skipping changelog update."
+            echo "entry=No changes detected in the generated client." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Truncate to ~300 lines to stay within model token limits.
+          DIFF_TRUNCATED=$(printf '%s' "$DIFF" | head -300)
+
+          PAYLOAD=$(jq -n --arg diff "$DIFF_TRUNCATED" '{
+            "model": "gpt-4o-mini",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are a technical writer. Given a unified diff of a TypeScript API client generated from an OpenAPI schema, produce a concise human-readable changelog entry in Markdown. Group items under ### Added, ### Changed, and ### Removed headings (omit empty sections). Use bullet points. Be specific about endpoint paths and type names. Aim for 3-15 bullets total."
+              },
+              {
+                "role": "user",
+                "content": ("Here is the diff of the generated TypeScript client:\n\n```diff\n" + $diff + "\n```\n\nWrite the changelog entry.")
+              }
+            ],
+            "max_tokens": 600
+          }')
+
+          RESPONSE=$(curl -fsSL \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "https://models.inference.ai.azure.com/chat/completions")
+
+          ENTRY=$(printf '%s' "$RESPONSE" | jq -r '.choices[0].message.content // "AI changelog generation failed — review the diff manually."')
+
+          {
+            echo "entry<<EOF"
+            printf '%s' "$ENTRY"
+            echo ""
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prepend entry to CHANGELOG.md
+        if: ${{ steps.changelog.outputs.entry != 'No changes detected in the generated client.' }}
+        env:
+          SOURCE_SHA: ${{ github.event.client_payload.sha }}
+          SOURCE_REF: ${{ github.event.client_payload.ref }}
+          CHANGELOG_ENTRY: ${{ steps.changelog.outputs.entry }}
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          {
+            printf '## %s — %s\n\n' "$DATE" "$(echo "$SOURCE_REF" | sed 's|refs/heads/||')"
+            printf 'Source: `bartek-borkowski-airhelp/aviation-fleet` @ [`%s`](https://github.com/bartek-borkowski-airhelp/aviation-fleet/commit/%s)\n\n' \
+              "${SOURCE_SHA:0:7}" "$SOURCE_SHA"
+            printf '%s\n\n' "$CHANGELOG_ENTRY"
+            printf -- '---\n\n'
+            cat CHANGELOG.md 2>/dev/null || true
+          } > CHANGELOG.md.tmp
+          mv CHANGELOG.md.tmp CHANGELOG.md
+
+      - name: Remove snapshot file
+        run: rm -f src/schema.d.ts.prev
+
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
         with:
@@ -43,5 +123,11 @@ jobs:
             Auto-generated TypeScript types from updated OpenAPI schema.
 
             Source: `bartek-borkowski-airhelp/aviation-fleet` @ `${{ github.event.client_payload.sha }}` (`${{ github.event.client_payload.ref }}`)
+
+            ---
+
+            ### Changelog entry preview
+
+            ${{ steps.changelog.outputs.entry }}
           branch: chore/regenerate-openapi-types
           delete-branch: true
