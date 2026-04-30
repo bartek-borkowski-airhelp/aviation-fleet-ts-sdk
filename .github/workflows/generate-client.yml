@@ -23,8 +23,16 @@ jobs:
       - name: Install openapi-typescript
         run: npm install -D openapi-typescript typescript
 
+      - name: Fetch OpenAPI schema
+        run: |
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ secrets.AVIATION_FLEET_PAT }}" \
+            -H "Accept: application/vnd.github.raw+json" \
+            "https://api.github.com/repos/bartek-borkowski-airhelp/aviation-fleet/contents/swagger/v1/swagger.yaml?ref=${{ github.event.client_payload.sha }}" \
+            -o openapi-schema.yaml
+
       - name: Generate TypeScript types
-        run: npx openapi-typescript "${{ github.event.client_payload.schema_url }}" -o ./src/schema.d.ts
+        run: npx openapi-typescript ./openapi-schema.yaml -o ./src/schema.d.ts
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
@@ -34,6 +42,6 @@ jobs:
           body: |
             Auto-generated TypeScript types from updated OpenAPI schema.
 
-            Schema URL: `${{ github.event.client_payload.schema_url }}`
+            Source: `bartek-borkowski-airhelp/aviation-fleet` @ `${{ github.event.client_payload.sha }}` (`${{ github.event.client_payload.ref }}`)
           branch: chore/regenerate-openapi-types
           delete-branch: true
