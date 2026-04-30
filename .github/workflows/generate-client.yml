@@ -26,7 +26,7 @@ jobs:
       - name: Fetch OpenAPI schema
         run: |
           curl -fsSL \
-            -H "Authorization: Bearer ${{ secrets.AVIATION_FLEET_PAT }}" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github.raw+json" \
             "https://api.github.com/repos/bartek-borkowski-airhelp/aviation-fleet/contents/swagger/v1/swagger.yaml?ref=${{ github.event.client_payload.sha }}" \
             -o openapi-schema.yaml
